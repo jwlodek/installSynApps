@@ -139,6 +139,7 @@ def parse_user_input():
     config_group.add_argument('-v', '--updateversions',   action='store_true', help='Add this flag to update module versions based on github tags. Must be used with -c flag.')
 
     build_group.add_argument('-y', '--forceyes',         action='store_true', help='Add this flag to automatically go through all of the installation steps without prompts.')
+    build_group.add_argument('-a', '--addon',            help='Add this flag and a module name to specify an add-on bundle to package automatically.')
     build_group.add_argument('-d', '--dependency',       action='store_true', help='Add this flag to install dependencies via a dependency script.')
     build_group.add_argument('-f', '--flatbinaries',     action='store_true', help='Add this flag if you wish for output binary bundles to have a flat format.')
     build_group.add_argument('-s', '--includesources',   action='store_true', help='Add this flag for output bundles to include the full source tree.')
@@ -409,14 +410,14 @@ def execute_build(path_to_configure, yes, grab_deps, install_config, cloner, upd
 #                                                                       #
 #########################################################################
 
-def generate_bundles(yes, install_config, packager, flat_output, include_src):
+def generate_bundles(yes, install_config, packager, flat_output, include_src, addon=None):
 
     print()
     if not yes:
         create_tarball = input('Would you like to create a tarball binary bundle now? (y/n) > ')
     else:
         create_tarball = 'y'
-    if create_tarball == 'y':
+    if create_tarball == 'y' and addon is None:
         ret_src = 0
         # If we want to, include debug bundles
         if include_src:
@@ -436,20 +437,33 @@ def generate_bundles(yes, install_config, packager, flat_output, include_src):
         if not yes:
             print()
             create_add_on_tarball = input('Would you like to create an add-on tarball to add a module to an existing bundle? (y/n) > ')
+        elif addon is not None:
+            create_add_on_tarball = 'y'
         else:
             create_add_on_tarball = 'n'
-            ask_create_add_on_tarball = False
+
         if create_add_on_tarball == 'y':
-            module_name = input('Please enter name of the module you want packaged (All capitals - Ex. ADPROSILICA) > ')
+            if not yes:
+                module_name = input('Please enter name of the module you want packaged (All capitals - Ex. ADPROSILICA) > ')
+            else:
+                module_name = addon
+        
             if install_config.get_module_by_name(module_name) is None or install_config.get_module_by_name(module_name).build == 'NO':
                 print('ERROR - Selected module not built, cannot create add on tarball!')
                 err_exit(7)
+            
             output_filename = packager.create_bundle_name(module_name=module_name, source_bundle=include_src)
+            
             if output_filename is None:
                 print('ERROR - No module named {} could be found in current configuration, abort.'.format(module_name))
                 err_exit(7)
             ret = packager.create_add_on_package(output_filename, module_name, with_sources=include_src)
-            make_another_tarball = input('Would you like to create another add on tarball? (y/n) > ')
+            
+            if not yes:
+                make_another_tarball = input('Would you like to create another add on tarball? (y/n) > ')
+            else:
+                make_another_tarball = 'n'
+            
             if make_another_tarball != 'y':
                 ask_create_add_on_tarball = False
         else:
@@ -469,7 +483,7 @@ def generate_bundles(yes, install_config, packager, flat_output, include_src):
             print('OPI screen tarball generated.')
 
 
-def execute(yes, grab_deps, flat_output, include_src, path_to_configure, force_install_path, threads, single_thread):
+def execute(yes, grab_deps, flat_output, include_src, path_to_configure, force_install_path, threads, single_thread, addon):
 
     try:
         install_config = parse_configuration(path_to_configure, yes, force_install_path)
@@ -496,7 +510,7 @@ def execute(yes, grab_deps, flat_output, include_src, path_to_configure, force_i
         execute_build(path_to_configure, yes, grab_deps, install_config, cloner, updater, builder, autogenerator)
 
         # Generate output bundles
-        generate_bundles(yes, install_config, packager, flat_output, include_src)
+        generate_bundles(yes, install_config, packager, flat_output, include_src, addon=addon)
 
         # Finished
         print('Done.')
@@ -518,6 +532,7 @@ def main():
     dep                 = args['dependency']
     flat_output         = args['flatbinaries']
     include_src         = args['includesources']
+    addon               = args['addon']
     # Inclusion of sources only supported in non-flat output mode
     if include_src:
         flat_output = False
@@ -532,7 +547,7 @@ def main():
 
     print('Reading install configuration directory located at: {}...'.format(path_to_configure))
     print()
-    execute(yes, dep, flat_output, include_src, path_to_configure, force_install_path, threads, single_thread)
+    execute(yes, dep, flat_output, include_src, path_to_configure, force_install_path, threads, single_thread, addon)
     script_end_time = time.time()
     print('Finished in {} seconds...'.format(script_end_time - script_start_time))
     print('Done.\n')
