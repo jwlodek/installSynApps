@@ -1,3 +1,0 @@
-installCLI
-installGUI
-installSynApps

@@ -1,5 +1,0 @@
-distro
-requests
-
-[test]
-pytest
