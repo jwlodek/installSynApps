@@ -59,6 +59,7 @@ from pathlib import Path
 import shutil
 import sys
 import time
+from typing import Any
 
 from installSynApps import logger
 
@@ -69,9 +70,18 @@ from .utils import get_active_environment, DEFAULT_MACROS, DEFAULT_MODULES, get_
 from .errors import *
 from .clone import clone_and_checkout_config, clone_single_module
 from .build import build_all, build_single_module
+import platformdirs
+
+EPICS_ENV_CONFIG_DEFAULT_SEARCH_PATH = [
+    os.environ.get("EPICS_ENV_CONFIG_PATH"),
+    ".",
+    platformdirs.user_config_dir(),
+]
+
+EPICS_ENV_CONFIG_FILENAME = ".epicsenv.json"
 
 
-def show_prompt(text: str, default: str=None, choices: list[str]=None, display_choices_inline: bool=False, return_resp_as_index: bool=False):
+def show_prompt(text: str, default: str | None = None, choices: list[str] = None, display_choices_inline: bool=False, return_resp_as_index: bool=False):
 
     if default is not None and type(default) == int:
         default = choices[default]
@@ -133,135 +143,78 @@ def show_prompt(text: str, default: str=None, choices: list[str]=None, display_c
     return ret
 
 
-def parse_args():
-    parser = argparse.ArgumentParser(description="Utility for managing EPICS build environments.")
-    parser.add_argument("command", help="Primary action", choices=["init", "delete", "clone", "build", "update", "use", "show", "help"])
-    parser.add_argument("subcommand", nargs="+", help="First subcommand must be in [env, module]. Subsequent subcommand is either the env config path or module name.")
-    parser.add_argument("-t", "--threads", help="Number of threads to use for build", type=int, default=0)
+def get_config_file_path(args: dict[str, Any], ensure_exists: bool = True, ensure_editable: bool = False) -> str:
+    config_file_path = None
 
-    parser.add_argument("-d", "--debug", help="Enable debug messages", action="store_true")
-    parser.add_argument("-p", "--printcommands", help="Print bash/batch commands run by epicsenv", action="store_true")
-    parser.add_argument("-c", "--config", help="Path to environment config file")
-
-    parser.add_argument("-u", "--url", help="Module git repository url")
-    parser.add_argument("-v", "--version", help="Module version to checkout")
-    parser.add_argument("-r", "--recursive", help="Clone module recursively", action="store_true")
-
-    args = vars(parser.parse_args())
-    if len(args["subcommand"]) == 2:
-        args["target"] = args["subcommand"][1]
-    elif len(args["subcommand"]) == 1:
-        args["target"] = None
+    if args["config"] is not None:
+        config_file_path = args["config"]
+    elif args["global"]:
+        config_file_path = os.path.join(platformdirs.user_config_dir(), EPICS_ENV_CONFIG_FILENAME)
+    elif not ensure_exists:
+        config_file_path = os.path.join(os.getcwd(), EPICS_ENV_CONFIG_FILENAME)
     else:
-        raise ValueError("Invalid number of subcommands provided, must be 1 or 2.")
+        for search_loc in EPICS_ENV_CONFIG_DEFAULT_SEARCH_PATH:
+            if search_loc is not None and os.path.exists(os.path.join(search_loc, EPICS_ENV_CONFIG_FILENAME)):
+                config_file_path = os.path.join(search_loc, EPICS_ENV_CONFIG_FILENAME)
+                break
+    
+    if (ensure_exists and not os.path.exists(config_file_path)) or not config_file_path:
+        raise FileNotFoundError("Failed to find valid config file!")
+    
+    if ensure_editable and not os.access(config_file_path, os.W_OK):
+        raise PermissionError(f"Insufficient permissions to modify environment {config_file_path}!")
 
-    return args
+    return config_file_path
 
 
-def init_env(args):
-    if not os.path.exists(CONFIG_DIR):
-        os.makedirs(CONFIG_DIR)
-        with open(os.path.join(CONFIG_DIR, "epicsenv.ini"), "w") as fp:
-            fp.write("ACTIVE_ENV=\n")
+def init_env(args: dict[str, Any]) -> None:
 
-    env_location = show_prompt("Initialize local environment?", choices=["local", "global"], default="local")
+    config_file_path = get_config_file_path(args, ensure_exists=False)
 
     env = {}
-    if env_location == "local":
-        os.mkdir("epicsenv")
-        env["NAME"] = "epicsenv"
-        top_dir = os.path.join(os.getcwd(), "epicsenv")
-        env_config_path = os.path.join(top_dir, "epicsenv.json")
+
+    if args["global"]:
+        default_install_loc = "/epics/src" if not sys.platform == "win32" else "C:\\epics\\src"
+        default_install_loc = "/opt/epics" if not sys.platform == "win32" else "C:\\epics\\install"
+
     else:
-        env["NAME"] = show_prompt("Name of the environment to initialize.", default="epicsenv")
-        top_dir = os.getcwd()
-        env_config_path = os.path.join(CONFIG_DIR, f"{env['NAME']}.json")
+        default_build_loc = os.path.join(os.getcwd(), ".epics", "build")
+        default_install_loc = os.path.join(os.getcwd(), ".epics", "install")
 
-    env["BUILD_LOC"] = show_prompt("Path to the build location", default=os.path.join(top_dir, "build"))
-    env["INSTALL_LOC"] = show_prompt("Path to the install location", default=os.path.join(top_dir, "install"))
-    start_with_defaults = show_prompt("Start with default EPICS_BASE and SUPPORT modules?", choices=["y", "n"], default="y")
-    if start_with_defaults == "y":
-        env["CONFIG_MACROS"] = DEFAULT_MACROS
-        env["MODULES"] = DEFAULT_MODULES
+    env["BUILD_LOC"] = show_prompt("Path to the build location", default=default_build_loc)
+    env["INSTALL_LOC"] = show_prompt("Path to the install location", default=default_install_loc)
+    env["CONFIG_MACROS"] = DEFAULT_MACROS
+    env["MODULES"] = DEFAULT_MODULES
 
-    with open(env_config_path, "w") as fp:
+    with open(config_file_path, "w") as fp:
         env_as_json = json.dumps(env, indent=4)
         fp.write(env_as_json)
 
-    print(f"Environment {env['NAME']} initialized with config file at {env_config_path}.")
-    print(f"Activate with: epicsenv activate env {env['NAME']}")
+    print(f"Environment initialized with config file at {config_file_path}.")
 
 
-def use_env(args) -> Path | None:
-    if args['target'] is None and os.path.exists(os.path.join("epicsenv", "epicsenv.json")):
-        epics_env_config_path = os.path.abspath(os.path.join("epicsenv", "epicsenv.json"))
-    elif os.path.exists(args['target']) and os.path.isfile(args['target']) and args['target'].endswith(".json"):
-        epics_env_config_path = os.path.abspath(args['target'])
-    else:
-        epics_env_config_path = os.path.join(CONFIG_DIR, f"{args['target']}.json")
-    try:
-        InstallConfiguration(epics_env_config_path)
-        with open(os.path.join(CONFIG_DIR, "epicsenv.ini"), "w") as fp:
-            fp.write(f"ACTIVE_ENV={epics_env_config_path}\n")
-        print(f"Environment {epics_env_config_path} activated.")
-        return Path(epics_env_config_path)
+def delete_env(args: dict[str, Any]):
 
-    except Exception as e:
-        print(f"Failed to activate environment {epics_env_config_path}!")
-        print(str(e))
+    config_file_path = get_config_file_path(args, ensure_editable=True)
 
-    return None
+    ic = InstallConfiguration(Path(config_file_path))
+    for module in ic.modules.values():
+        shutil.rmtree(os.path.join(ic.build_location, module.module_dir_name))
+
+    shutil.rmtree(ic.install_location)
+
+    os.remove(config_file_path)
 
 
-def delete_env(args):
-    if args['target'] is None:
-        raise ValueError("No target environment specified for deletion.")
-
-    current_active_env = get_active_environment()
-
-    active_env = use_env(args)
-    InstallConfiguration(active_env)
-
-    if os.path.exists(active_env):
-        os.remove(active_env)
-        print(f"Environment {active_env} deleted.")
-    else:
-        print(f"Environment {active_env} not found.")
-
-    if current_active_env != active_env:
-        with open(os.path.join(CONFIG_DIR, "epicsenv.ini"), "w") as fp:
-            fp.write(f"ACTIVE_ENV={current_active_env}\n")
-
-def clone_env(args):
-    active_env = get_active_environment()
-    if args['target'] is not None and active_env is None:
-        active_env = use_env(args)
-    if active_env is None:
-        raise NoActiveEnvironmentError("No active environment to clone.")
-
-    failed_to_clone = clone_and_checkout_config(InstallConfiguration(active_env))
-    if len(failed_to_clone) > 0:
-        print("Failed to clone the following modules:")
-        for mod in failed_to_clone:
-            print(f"  - {mod}")
-    else:
-        print("Environment cloned and checked out.")
-
-
-def build_env(args):
-    active_env = get_active_environment()
-    if args['target'] is not None and get_active_environment() is None:
-        active_env = use_env(args)
-    if active_env is None:
-        raise NoActiveEnvironmentError("No active environment to clone.")
-    env = InstallConfiguration(active_env)
-    build_all(env, num_threads=args["threads"])
-    env.save()
+def build_env(args: dict[str, Any]):
+    config_file_path = get_config_file_path(args)
+    ic = InstallConfiguration(config_file_path)
+    build_all(ic, num_threads=args["threads"])
     print("Environment built.")
 
-
 def show_env(args):
-    active_env = get_active_environment()
+    config_file_path = get_config_file_path(args)
+    ic = InstallConfiguration(config_file_path)
 
     print("Available environments:\n")
     if os.path.exists(CONFIG_DIR):
@@ -369,7 +322,22 @@ def use_module(args):
 def main():
 
     print(get_welcome_text())
-    args = parse_args() # Get CLI args
+    parser = argparse.ArgumentParser(description="Utility for managing EPICS build environments.")
+    parser.add_argument("command", help="Primary action", choices=["init", "delete", "clone", "build", "update", "use", "show", "help"])
+    parser.add_argument("subcommand",  help="First subcommand must be in [env, module]. Subsequent subcommand is either the env config path or module name.", choices=["env", "module"])
+    parser.add_argument("module", required=False, help="Specifies which module to apply action to. If ommitted, action is applied to all modules in config.")
+    parser.add_argument("-t", "--threads", help="Number of threads to use for build", type=int, default=0)
+
+    parser.add_argument("-d", "--debug", help="Enable debug messages", action="store_true")
+    parser.add_argument("-p", "--printcommands", help="Print bash/batch commands run by epicsenv", action="store_true")
+    parser.add_argument("-c", "--config", help="Path to environment config file")
+
+    parser.add_argument("-u", "--url", help="Module git repository url")
+    parser.add_argument("-v", "--version", help="Module version to checkout")
+    parser.add_argument("-r", "--recursive", help="Clone module recursively", action="store_true")
+    parser.add_argument("-g", "--global", action="store_true", help="Use user's global environment")
+
+    args = vars(parser.parse_args())
     logger._DEBUG = args["debug"] # Set debug flag
     logger._PRINT_COMMANDS = args["printcommands"] # Set print commands flag
 
@@ -380,4 +348,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

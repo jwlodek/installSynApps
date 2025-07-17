@@ -19,3 +19,4 @@ __pycache__/
 initIOC/
 logs/
 venv/
+*.egg*

@@ -1,5 +1,4 @@
 {
-    "NAME": "epics",
     "INSTALL_LOC": "/opt/epics",
     "BUILD_LOC": "/epics/modules",
     "CONFIG_MACROS": {
@@ -81,7 +80,7 @@
             "RECURSIVE": true
         },
         "SNCSEQ": {
-            "URL": "https://github.com/mdavidsaver/sequencer",
+            "URL": "https://github.com/mdavidsaver/sequencer-mirror",
             "VERSION": "2.2.8"
         },
         "OPTICS": {

@@ -11,7 +11,7 @@ from .clone import clone_single_module
 from .utils import get_module_configure_dirs
 
 # Currently only support auto-fetching dependencies w/ dnf
-BASE_DEPS_DNF = [
+BASE_DEPS_DNF = set([
     "re2c",
     "readline-devel",
     "libxml2-devel",
@@ -34,7 +34,7 @@ BASE_DEPS_DNF = [
     "zeromq-devel",
     "giflib-devel",
     "libXtst-devel"
-]
+])
 
 def acquire_dependecies():
     """Method that runs dependency install shell/batch script
@@ -68,7 +68,7 @@ def acquire_dependecies():
 
 
 
-def build_single_module(install_config: InstallConfiguration, module: InstallModule, num_threads: int = 0):
+def build_single_module(install_config: InstallConfiguration, module: InstallModule, num_threads: int | None = None):
     """Function that executes build of single module
 
     First, checks if all dependencies built, if not, does that first.
@@ -108,13 +108,10 @@ def build_single_module(install_config: InstallConfiguration, module: InstallMod
     if module.name != "EPICS_BASE":
         logger.write(f"Replacing CONFIG_SITE and RELEASE files for {module.name}")
         for configure_dir, filenames in get_module_configure_dirs(module_abs_path):
-            for file in filenames:
-                if file.startswith("CONFIG_SITE") or file.startswith("RELEASE"):
-                    os.remove(os.path.join(configure_dir, file))
-            with open(os.path.join(configure_dir, "CONFIG_SITE"), "w") as fp:
+            with open(os.path.join(configure_dir, "CONFIG_SITE.local"), "w") as fp:
                 for macro in install_config.build_options:
                     fp.write(f"{macro}={install_config.build_options[macro]}\n")
-            with open(os.path.join(configure_dir, "RELEASE"), "w") as fp:
+            with open(os.path.join(configure_dir, "RELEASE.local"), "w") as fp:
                 for mod in install_config.modules.values():
                     fp.write(f"{mod.name}={os.path.join(install_config.build_location, mod.url.split('/')[-1].split('.')[0])}\n")
 
@@ -122,7 +119,7 @@ def build_single_module(install_config: InstallConfiguration, module: InstallMod
     if module.build_cmd is not None:
         cmd = module.build_cmd.split(" ")
     else:
-        cmd = ["make", "-C", module_abs_path, f"-sj{'' if num_threads == 0 else num_threads}"]
+        cmd = ["make", "-C", module_abs_path, f"-sj{'' if not num_threads else num_threads}"]
     
     logger.print_command(cmd)
     proc = Popen(cmd)

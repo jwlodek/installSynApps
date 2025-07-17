@@ -13,10 +13,8 @@ from . import logger
 # Only support 64 bit windows
 if platform == 'win32':
     OS_class = 'windows-x64'
-    CONFIG_DIR = os.path.join(os.getenv('APPDATA'), 'epicsenv')
 elif platform == 'darwin':
     OS_class = 'MacOS'
-    CONFIG_DIR = os.path.join(os.path.expanduser('~'), '.config', 'epicsenv')
 else:
     try:
         # External package used to identify linux distribution version. Note that this adds external
@@ -26,7 +24,6 @@ else:
         OS_class = '{}_{}'.format(v[0], v[1])
     except:
         OS_class='linux'
-    CONFIG_DIR = os.path.join(os.path.expanduser('~'), '.config', 'epicsenv')
 
 # Module version, author, copyright
 __version__     = "R3-0"
