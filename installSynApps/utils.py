@@ -192,9 +192,4 @@ def get_active_environment():
                     return line.split("=")[1].strip()
     return None
 
-def get_module_configure_dirs(module_abs_path: Path) -> list[tuple[Path, list[str]]]:
-    configure_dirs = []
-    for dirpath, _, filenames in os.walk(module_abs_path):
-        if os.path.basename(dirpath) == "configure":
-            configure_dirs.append((dirpath, filenames))
-    return configure_dirs
+
